@@ -1,2 +1,3 @@
-# terraform-aws-slackbot-report-message
-Slackbot plugin for reporting a message to mods
+# Slackbot Mod Tools
+
+Slackbot plugin for Slack mods to receive reports about message and take action on those reports.
