@@ -4,7 +4,7 @@ variable "api_name" {
 
 variable "dialog_description" {
   description = "Lambda function description."
-  default     = "Open dialog to collect dialog for thread removal."
+  default     = "Open dialog to collect report."
 }
 
 variable "dialog_function_name" {
