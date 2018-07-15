@@ -173,59 +173,31 @@ function postReport(event) {
         }
       };
       const actions = msg.thread_ts === undefined ? [remove_message] : [remove_message, remove_thread];
-      return slack.chat.postMessage({
-          channel: moderation_channel,
-          text: 'A message has been reported.',
-          attachments: [
-            {
-              color: 'warning',
-              fields: [
-                {
-                  title: 'Reported By',
-                  value: `<@${payload.user.id}>`,
-                  short: true
-                },
-                {
-                  title: 'Posted',
-                  value: `<!date^${ts_short}^{date_short_pretty} {time}|unknown>`,
-                  short: true
-                },
-                {
-                  title: 'Reason',
-                  value: `${payload.submission.reason}`,
-                  short: false
-                }
-              ]
-            },
-            {
-              callback_id: remove_callback_id,
-              color: 'danger',
-              fields: [
-                {
-                  title: 'Author',
-                  value: `<@${msg.user}>`,
-                  short: true
-                },
-                {
-                  title: 'Channel',
-                  value: `<#${msg.channel}>`,
-                  short: true
-                },
-                {
-                  title: 'Link',
-                  value: `<${payload.submission.permalink}|${payload.team.domain}.slack.com>`,
-                  short: false
-                },
-                {
-                  title: 'Message',
-                  value: `${msg.text}`,
-                  short: false
-                }
-              ],
-              actions: actions
-            }
-          ]
-        });
+      const post = {
+        channel: moderation_channel,
+        text: 'A message has been reported.',
+        attachments: [
+          {
+            color: 'warning',
+            footer: `Reported by <@${payload.user.id}>`,
+            text: payload.submission.reason,
+            title: 'Reason',
+            ts: payload.action_ts
+          },
+          {
+            callback_id: remove_callback_id,
+            color: 'danger',
+            footer: `Posted in <#${msg.channel}> by <@${msg.user}>`,
+            title: 'Message',
+            title_link: payload.submission.permalink,
+            text: msg.text,
+            ts: msg.ts,
+            actions: actions
+          }
+        ]
+      };
+      console.log(`POST ${JSON.stringify({method: 'postMessage', payload: post})}`);
+      return slack.chat.postMessage(post);
     });
   });
 }
