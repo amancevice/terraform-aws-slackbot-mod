@@ -173,6 +173,7 @@ function postReport(event) {
         }
       };
       const actions = msg.thread_ts === undefined ? [remove_message] : [remove_message, remove_thread];
+      const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
       const post = {
         channel: moderation_channel,
         text: 'A message has been reported.',
@@ -187,7 +188,7 @@ function postReport(event) {
           {
             callback_id: remove_callback_id,
             color: 'danger',
-            footer: `Posted in <#${msg.channel}> by <@${msg.user}>`,
+            footer: `Posted in <#${channel}> by <@${msg.user}>`,
             title: 'Message',
             title_link: payload.submission.permalink,
             text: msg.text,
