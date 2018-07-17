@@ -39,7 +39,7 @@ function getSlack() {
     } else {
       const { WebClient } = require('@slack/client');
       slack = {};
-      slack.user = new WebClient(secrets.ACCESS_TOKEN);
+      slack.user = new WebClient(secrets.USER_ACCESS_TOKEN);
       slack.bot = new WebClient(secrets.BOT_ACCESS_TOKEN);
       resolve(slack);
     }
