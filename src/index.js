@@ -2,7 +2,7 @@ const remove_callback_id = process.env.REMOVE_CALLBACK_ID;
 const report_callback_id = process.env.REPORT_CALLBACK_ID;
 const moderation_channel = process.env.MODERATION_CHANNEL;
 
-let secrets, payload, slack;
+let secrets, slack;
 
 /**
  * Get Slack tokens from memory or AWS SecretsManager.
@@ -38,10 +38,32 @@ function getSlack() {
       resolve(slack);
     } else {
       const { WebClient } = require('@slack/client');
-      slack = new WebClient(secrets.ACCESS_TOKEN);
+      slack = {};
+      slack.user = new WebClient(secrets.ACCESS_TOKEN);
+      slack.bot = new WebClient(secrets.BOT_ACCESS_TOKEN);
       resolve(slack);
     }
   });
+}
+
+/**
+ * Get payload from SNS message.
+ *
+ * @param {object} event SNS event object.
+ */
+function getPayload(event) {
+  // Log it
+  console.log(`EVENT ${JSON.stringify(event)}`);
+
+  // Map it
+  let payload;
+  event.Records.map((record) => {
+    // Parse it
+    payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64').toString());
+  });
+  // Send it
+  console.log(`PAYLOAD ${JSON.stringify(payload)}`);
+  return payload;
 }
 
 /**
@@ -63,7 +85,7 @@ function getMessage(permalink) {
       ts: ts
     };
     console.log(`REPLIES ${JSON.stringify(options)}`);
-    return slack.conversations.replies(options).then((res) => {
+    return slack.user.conversations.replies(options).then((res) => {
       console.log(`MESSAGE ${JSON.stringify(res.messages[0])}`);
       return res.messages[0];
     });
@@ -75,7 +97,7 @@ function getMessage(permalink) {
       latest: ts
     };
     console.log(`HISTORY ${JSON.stringify(options)}`);
-    return slack.conversations.history(options).then((res) => {
+    return slack.user.conversations.history(options).then((res) => {
       console.log(`MESSAGE ${res.messages[0]}`);
       return res.messages[0];
     });
@@ -83,257 +105,319 @@ function getMessage(permalink) {
 }
 
 /**
- * Get reasoning for thread deletion.
+ * Open dialog to report message.
  *
  * @param {object} event SNS event object.
  */
-function openDialog(event) {
-  // Log it
-  console.log(`EVENT ${JSON.stringify(event)}`);
-
-  // Map it
-  event.Records.map((record) => {
-
-    // Parse it
-    payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64').toString());
-
-    // Post it
-    console.log(`PAYLOAD ${JSON.stringify(payload)}`);
-    return slack.chat.getPermalink({
-        channel: payload.channel.id,
-        message_ts: payload.message.ts
-      }).then((res) => {
-        console.log(`PERMALINK ${res.permalink}`);
-        const dialog = {
-          callback_id: report_callback_id,
-          title: 'Report Message',
-          submit_label: 'Send',
-          elements: [
-            {
-              hint: 'This will be posted to the moderators.',
-              label: 'Reason',
-              name: 'reason',
-              placeholder: 'Why is this thread being reported?',
-              type: 'textarea'
-            },
-            {
-              hint: 'Do not alter this value.',
-              label: 'Permalink',
-              name: 'permalink',
-              type: 'text',
-              value: res.permalink
-            }
-          ]
-        };
-        console.log(`DIALOG ${JSON.stringify(dialog)}`);
-        return slack.dialog.open({
-          trigger_id: payload.trigger_id,
-          dialog: dialog
-        });
-      });
-  });
-}
-
-/**
- * Post report to mod channel.
- *
- * @param {object} event SNS event object.
- */
-function postReport(event) {
-  // Log it
-  console.log(`EVENT ${JSON.stringify(event)}`);
-
-  // Map it
-  event.Records.map((record) => {
-
-    // Parse it
-    payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64').toString());
-
-    // Post it
-    console.log(`PAYLOAD ${JSON.stringify(payload)}`);
-    getMessage(payload.submission.permalink).then((msg) => {
-      const ts_short = Math.floor(msg.ts);
-      const remove_message = {
-        name: 'remove_message',
-        text: 'Remove Message',
-        value: 'remove_message',
-        type: 'button'
-      };
-      const remove_thread = {
-        name: 'remove_thread',
-        text: 'Remove Thread',
-        style: 'danger',
-        type: 'button',
-        value: 'remove_thread',
-        confirm: {
-          title: 'Are you sure?',
-          text: 'This will delete the *entire* thread.',
-          ok_text: 'Yes',
-          dismiss_text: 'No'
-        }
-      };
-      const actions = msg.thread_ts === undefined ? [remove_message] : [remove_message, remove_thread];
-      const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
-      const post = {
-        channel: moderation_channel,
-        text: 'A message has been reported.',
-        attachments: [
+function reportMessageAction(payload) {
+  return slack.bot.chat.getPermalink({
+      channel: payload.channel.id,
+      message_ts: payload.message.ts
+    }).then((res) => {
+      console.log(`PERMALINK ${res.permalink}`);
+      const dialog = {
+        callback_id: 'report_message_submit',
+        title: 'Report Message',
+        submit_label: 'Send',
+        elements: [
           {
-            color: 'warning',
-            footer: `Reported by <@${payload.user.id}>`,
-            text: payload.submission.reason,
-            title: 'Reason',
-            ts: payload.action_ts
+            hint: 'This will be posted to the moderators.',
+            label: 'Reason',
+            name: 'reason',
+            placeholder: 'Why is this thread being reported?',
+            type: 'textarea'
           },
           {
-            callback_id: remove_callback_id,
-            color: 'danger',
-            footer: `Posted in <#${channel}> by <@${msg.user}>`,
-            title: 'Message',
-            title_link: payload.submission.permalink,
-            text: msg.text,
-            ts: msg.ts,
-            actions: actions
+            hint: 'Do not alter this value.',
+            label: 'Permalink',
+            name: 'permalink',
+            type: 'text',
+            value: res.permalink
           }
         ]
       };
-      console.log(`POST ${JSON.stringify({method: 'postMessage', payload: post})}`);
-      return slack.chat.postMessage(post);
+      console.log(`DIALOG ${JSON.stringify(dialog)}`);
+      return slack.bot.dialog.open({
+        trigger_id: payload.trigger_id,
+        dialog: dialog
+      });
     });
+}
+
+/**
+ * Post report to moderator channel.
+ *
+ * @param {object} payload Slack payload.
+ * @param {string} remove remove_message or
+ */
+function reportMessageSubmit(payload, remove) {
+  return getMessage(payload.submission.permalink).then((msg) => {
+    const warn_user = {
+      name: 'warn_action',
+      text: 'Send Warning',
+      type: 'button',
+      value: payload.submission.permalink
+    };
+    const remove_message = {
+      name: 'remove_action',
+      style: 'danger',
+      text: 'Remove Message',
+      type: 'button',
+      value: payload.submission.permalink
+    };
+    const actions = [warn_user, remove_message];
+    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+    const post = {
+      channel: moderation_channel,
+      text: 'A message has been reported.',
+      attachments: [
+        {
+          color: 'warning',
+          footer: `Reported by <@${payload.user.id}>`,
+          text: payload.submission.reason,
+          title: 'Reason',
+          ts: payload.action_ts
+        },
+        {
+          callback_id: 'moderator_action',
+          color: 'danger',
+          footer: `Posted in <#${channel}> by <@${msg.user}>`,
+          title: 'Message',
+          title_link: payload.submission.permalink,
+          text: msg.text,
+          ts: msg.ts,
+          actions: actions
+        }
+      ]
+    };
+    console.log(`POST ${JSON.stringify(post)}`);
+    return slack.user.chat.postMessage(post);
   });
 }
 
 /**
- * Delete thread.
+ * Open dialog to take moderator action.
  *
- * @param {object} event SNS event object.
+ * @param {object} payload Slack payload.
  */
-function removeMessage(event) {
-  // Log it
-  console.log(`EVENT ${JSON.stringify(event)}`);
-
-  // Map it
-  event.Records.map((record) => {
-
-    // Parse it
-    payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64').toString());
-
-    // Post it
-    console.log(`PAYLOAD ${JSON.stringify(payload)}`);
-    const permalink = payload.original_message.attachments[1].fields[2].value.replace(/^<|\|.*?>$/g, '');
-    const channel = permalink.match(/archives\/(.*?)\//)[1];
-    console.log(`PERMALINK ${permalink}`);
-    return getMessage(permalink).then((msg) => {
-      if (payload.actions[0].value === 'remove_message') {
-        console.log(`DELETING ${msg.ts}`);
-        return slack.chat.delete({
-            channel: channel,
-            ts: msg.ts
-          }).then((res) => {
-            updateReport(payload.original_message);
-          });
-      } else if (payload.actions[0].value === 'remove_thread') {
-        return slack.conversations.replies({
-            channel: channel,
-            ts: msg.thread_ts
-          }).then((res) => {
-              return Promise.all(
-                res.messages.reverse().map((rep) => {
-                  console.log(`DELETING ${JSON.stringify(rep.ts)}`);
-                  slack.chat.delete({channel: channel, ts: rep.ts});
-                })
-              );
-            }).then((res) => {
-              return slack.chat.delete({channel: channel, ts: msg.thread_ts});
-            }).then((res) => {
-              return updateReport(payload.original_message);
-            });
-      }
-    })
-  });
-}
-
-/**
- * Remove actions from report.
- *
- * @param {object} original_message Original message from Slack.
- */
-function updateReport(original_message) {
-  return slack.chat.update({
-    channel: moderation_channel,
-    ts: payload.original_message.ts,
-    text: payload.original_message.text,
-    attachments: [
-      payload.original_message.attachments[0],
+function moderatorAction(payload, permalink, value) {
+  const options = {
+    private_dm: [
       {
-        callback_id: payload.original_message.attachments[1].callback_id,
-        color: 'danger',
-        fields: payload.original_message.attachments[1].fields
+        label: 'Warn in Private DM',
+        value: 'private_dm'
+      },
+      {
+        label: 'Warn in Thread',
+        value: 'post_in_thread'
+      }
+    ],
+    remove_message: [
+      {
+        label: 'Remove Message',
+        value: 'remove_message'
+      },
+      {
+        label: 'Remove Entire Thread',
+        value: 'remove_thread'
       }
     ]
+  }[value];
+  const dialog = {
+    callback_id: 'moderator_submit',
+    title: 'Moderator Action',
+    submit_label: 'Send',
+    elements: [
+      {
+        hint: 'Choose moderator action...',
+        label: 'Action',
+        name: 'type',
+        options: options,
+        type: 'select',
+        value: value
+      },
+      {
+        hint: 'Explain why the moderators are taking action.',
+        label: 'Message',
+        name: 'message',
+        placeholder: "Moderator's message...",
+        type: 'textarea'
+      },
+      {
+        hint: 'Do not alter this value.',
+        label: 'Permalink',
+        name: 'permalink',
+        type: 'text',
+        value: permalink
+      }
+    ]
+  };
+  console.log(`DIALOG ${JSON.stringify(dialog)}`);
+  return slack.bot.dialog.open({
+    trigger_id: payload.trigger_id,
+    dialog: dialog
   });
 }
 
 /**
- * Get reasoning for thread deletion.
+ * Post warning in private DM.
  *
- * @param {object} event SNS event object.
- * @param {object} context SNS event context.
- * @param {function} callback Lambda callback function.
+ * @param {object} payload Slack payload.
  */
-function dialog(event, context, callback) {
-  return getSecrets().then((res) => {
-      return getSlack();
-    }).then((res) => {
-      return openDialog(event);
-    }).then((res) => {
-      callback(null, res);
-    }).catch((err) => {
-      console.error(`ERROR ${err}`);
-      callback(err);
+function moderatorSubmitPrivateDm(payload) {
+  return getMessage(payload.submission.permalink).then((msg) => {
+    console.log('OPENING CONVERSATION');
+    return slack.bot.conversations.open({users: msg.user}).then((im) => {
+      console.log('POSTING MESSAGE');
+      return slack.bot.chat.postMessage({
+        channel: im.channel.id,
+        text: payload.submission.message,
+        attachments: [
+          {
+            color: 'danger',
+            title: 'Message',
+            title_link: payload.submission.permalink,
+            text: msg.text
+          }
+        ]
+      });
     });
+  });
 }
 
 /**
- * Post to mod channel.
+ * Post warning in thread.
  *
- * @param {object} event SNS event object.
- * @param {object} context SNS event context.
- * @param {function} callback Lambda callback function.
+ * @param {object} payload Slack payload.
  */
-function report(event, context, callback) {
-  return getSecrets().then((res) => {
-      return getSlack();
-    }).then((res) => {
-      return postReport(event);
-    }).then((res) => {
-      callback(null, res);
-    }).catch((err) => {
-      console.error(`ERROR ${err}`);
-      callback(err);
-    });
+function moderatorSubmitPostInThread(payload) {
+  return getMessage(payload.submission.permalink).then((msg) => {
+    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+    const options = {
+      channel: channel,
+      text: payload.submission.message,
+      thread_ts: msg.thread_ts || msg.ts
+    };
+    console.log(`POST ${JSON.stringify(options)}`);
+    return slack.user.chat.postMessage(options);
+  });
 }
 
 /**
- * Delete thread.
+ * Remove message.
+ *
+ * @param {object} payload Slack payload.
+ */
+function moderatorSubmitRemoveMessage(payload) {
+  return getMessage(payload.submission.permalink).then((msg) => {
+    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+    const options = {
+      channel: channel,
+      text: `_${payload.submission.message}_`,
+      ts: msg.ts
+    };
+    console.log(`REMOVE ${JSON.stringify(options)}`);
+    return slack.user.chat.update(options);
+  });
+}
+
+/**
+ * Remove message.
+ *
+ * @param {object} payload Slack payload.
+ */
+function moderatorSubmitRemoveThread(payload) {
+  return getMessage(payload.submission.permalink).then((msg) => {
+    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+    const options = {
+      channel: channel,
+      text: `_${payload.submission.message}_`,
+      ts: msg.thread_ts
+    };
+
+    return slack.user.conversations.replies(options).then((res) => {
+      return Promise.all(
+        res.messages.reverse().map((rep) => {
+          options.ts = rep.ts;
+          console.log(`REMOVE ${JSON.stringify(options)}`);
+          slack.user.chat.update(options);
+        })
+      );
+    }).then((res) => {
+      options.ts = msg.ts;
+      console.log(`REMOVE ${JSON.stringify(options)}`);
+      return slack.user.chat.update(options);
+    });
+  });
+}
+
+/**
+ * Handle SNS message.
  *
  * @param {object} event SNS event object.
  * @param {object} context SNS event context.
  * @param {function} callback Lambda callback function.
  */
-function remove(event, context, callback) {
-  return getSecrets().then((res) => {
-      return getSlack();
-    }).then((res) => {
-      return removeMessage(event);
-    }).then((res) => {
-      callback(null, res);
-    }).catch((err) => {
-      console.error(`ERROR ${err}`);
-      callback(err);
-    });
+function handler(event, context, callback) {
+  return getSecrets().then(getSlack).then((res) => {
+    const payload = getPayload(event);
+    console.log(`CALLBACK ${payload.callback_id}`);
+
+    // Open dialog to report message
+    if (payload.callback_id === 'report_message_action') {
+      return reportMessageAction(payload);
+    }
+
+    // Post report to moderator channel
+    else if (payload.callback_id === 'report_message_submit') {
+      return reportMessageSubmit(payload);
+    }
+
+    // Open dialog to take moderator action
+    else if (payload.callback_id === 'moderator_action') {
+      const action = payload.actions[0].name;
+      const permalink = payload.actions[0].value;
+
+      // Warn user
+      if (action === 'warn_action') {
+        return moderatorAction(payload, permalink, 'private_dm');
+      }
+
+      // Remove message
+      else if (action === 'remove_action') {
+        return moderatorAction(payload, permalink, 'remove_message');
+      }
+    }
+
+    // Post moderator action
+    else if (payload.callback_id === 'moderator_submit') {
+
+      // Warn user via DM
+      if (payload.submission.type === 'private_dm') {
+        return moderatorSubmitPrivateDm(payload);
+      }
+
+      // Warn user in thread
+      else if (payload.submission.type === 'post_in_thread') {
+        return moderatorSubmitPostInThread(payload);
+      }
+
+      // Remove message
+      else if (payload.submission.type === 'remove_message') {
+        return moderatorSubmitRemoveMessage(payload);
+      }
+
+      // Remove thread
+      else if (payload.submission.type === 'remove_thread') {
+        return moderatorSubmitRemoveThread(payload);
+      }
+    }
+  }).then((res) => {
+    callback(null, res);
+  }).catch((err) => {
+    console.error(`ERROR ${err}`);
+    callback(err);
+  });
 }
 
-exports.dialog = dialog;
-exports.report = report;
-exports.remove = remove;
+exports.handler = handler;

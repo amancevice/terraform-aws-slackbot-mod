@@ -3,10 +3,14 @@ provider "archive" {
 }
 
 locals {
-  dialog_function_name = "${coalesce("${var.dialog_function_name}", "slack-${var.api_name}-report-message-dialog")}"
-  report_function_name = "${coalesce("${var.report_function_name}", "slack-${var.api_name}-report-message-post")}"
-  remove_function_name = "${coalesce("${var.remove_function_name}", "slack-${var.api_name}-remove-message")}"
-  role_path            = "${coalesce("${var.role_path}", "/${var.api_name}/")}"
+  lambda_function_name = "${coalesce("${var.lambda_function_name}", "slack-${var.api_name}-moderator")}"
+
+  callbacks = [
+    "report_message_action",
+    "report_message_submit",
+    "moderator_action",
+    "moderator_submit"
+  ]
 }
 
 data "archive_file" "package" {
@@ -15,71 +19,17 @@ data "archive_file" "package" {
   type        = "zip"
 }
 
-data "aws_sns_topic" "dialog" {
-  name = "slack_callback_${var.dialog_topic}"
-}
-
-data "aws_sns_topic" "report" {
-  name = "slack_callback_${var.report_topic}"
-}
-
-data "aws_sns_topic" "remove" {
-  name = "slack_callback_${var.remove_topic}"
-}
-
-resource "aws_lambda_function" "dialog" {
-  description      = "${var.dialog_description}"
+resource "aws_lambda_function" "lambda" {
+  description      = "${var.lambda_description}"
   filename         = "${data.archive_file.package.output_path}"
-  function_name    = "${local.dialog_function_name}"
-  handler          = "index.dialog"
-  memory_size      = "${var.dialog_memory_size}"
+  function_name    = "${local.lambda_function_name}"
+  handler          = "index.handler"
+  memory_size      = "${var.lambda_memory_size}"
   role             = "${var.role_arn}"
   runtime          = "nodejs8.10"
   source_code_hash = "${data.archive_file.package.output_base64sha256}"
-  tags             = "${var.dialog_tags}"
-  timeout          = "${var.dialog_timeout}"
-
-  environment {
-    variables {
-      REPORT_CALLBACK_ID = "${var.report_topic}"
-      MODERATION_CHANNEL = "${var.moderation_channel}"
-      SECRET             = "${var.secret}"
-    }
-  }
-}
-
-resource "aws_lambda_function" "report" {
-  description      = "${var.report_description}"
-  filename         = "${data.archive_file.package.output_path}"
-  function_name    = "${local.report_function_name}"
-  handler          = "index.report"
-  memory_size      = "${var.report_memory_size}"
-  role             = "${var.role_arn}"
-  runtime          = "nodejs8.10"
-  source_code_hash = "${data.archive_file.package.output_base64sha256}"
-  tags             = "${var.report_tags}"
-  timeout          = "${var.report_timeout}"
-
-  environment {
-    variables {
-      REMOVE_CALLBACK_ID = "${var.remove_topic}"
-      MODERATION_CHANNEL = "${var.moderation_channel}"
-      SECRET             = "${var.secret}"
-    }
-  }
-}
-
-resource "aws_lambda_function" "remove" {
-  description      = "${var.remove_description}"
-  filename         = "${data.archive_file.package.output_path}"
-  function_name    = "${local.remove_function_name}"
-  handler          = "index.remove"
-  memory_size      = "${var.remove_memory_size}"
-  role             = "${var.role_arn}"
-  runtime          = "nodejs8.10"
-  source_code_hash = "${data.archive_file.package.output_base64sha256}"
-  tags             = "${var.remove_tags}"
-  timeout          = "${var.remove_timeout}"
+  tags             = "${var.lambda_tags}"
+  timeout          = "${var.lambda_timeout}"
 
   environment {
     variables {
@@ -89,44 +39,23 @@ resource "aws_lambda_function" "remove" {
   }
 }
 
-resource "aws_lambda_permission" "dialog_trigger" {
+resource "aws_lambda_permission" "trigger" {
+  count         = "${length("${local.callbacks}")}"
   action        = "lambda:InvokeFunction"
-  function_name = "${aws_lambda_function.dialog.function_name}"
+  function_name = "${aws_lambda_function.lambda.function_name}"
   principal     = "sns.amazonaws.com"
-  source_arn    = "${data.aws_sns_topic.dialog.arn}"
-  statement_id  = "AllowExecutionFromSNS"
+  source_arn    = "${element("${aws_sns_topic.callbacks.*.arn}", count.index)}"
+  statement_id  = "allow_${element("${local.callbacks}", count.index)}"
 }
 
-resource "aws_lambda_permission" "report_trigger" {
-  action        = "lambda:InvokeFunction"
-  function_name = "${aws_lambda_function.report.function_name}"
-  principal     = "sns.amazonaws.com"
-  source_arn    = "${data.aws_sns_topic.report.arn}"
-  statement_id  = "AllowExecutionFromSNS"
+resource "aws_sns_topic" "callbacks" {
+  count = "${length("${local.callbacks}")}"
+  name  = "slack_callback_${element("${local.callbacks}", count.index)}"
 }
 
-resource "aws_lambda_permission" "remove_trigger" {
-  action        = "lambda:InvokeFunction"
-  function_name = "${aws_lambda_function.remove.function_name}"
-  principal     = "sns.amazonaws.com"
-  source_arn    = "${data.aws_sns_topic.remove.arn}"
-  statement_id  = "AllowExecutionFromSNS"
-}
-
-resource "aws_sns_topic_subscription" "dialog_subscription" {
-  endpoint  = "${aws_lambda_function.dialog.arn}"
+resource "aws_sns_topic_subscription" "subscription" {
+  count     = "${length("${local.callbacks}")}"
+  endpoint  = "${aws_lambda_function.lambda.arn}"
   protocol  = "lambda"
-  topic_arn = "${data.aws_sns_topic.dialog.arn}"
-}
-
-resource "aws_sns_topic_subscription" "report_subscription" {
-  endpoint  = "${aws_lambda_function.report.arn}"
-  protocol  = "lambda"
-  topic_arn = "${data.aws_sns_topic.report.arn}"
-}
-
-resource "aws_sns_topic_subscription" "remove_subscription" {
-  endpoint  = "${aws_lambda_function.remove.arn}"
-  protocol  = "lambda"
-  topic_arn = "${data.aws_sns_topic.remove.arn}"
+  topic_arn = "${element("${aws_sns_topic.callbacks.*.arn}", count.index)}"
 }
