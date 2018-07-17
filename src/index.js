@@ -175,16 +175,14 @@ function reportMessageSubmit(payload, remove) {
           color: 'warning',
           footer: `Reported by <@${payload.user.id}>`,
           text: payload.submission.reason,
-          title: 'Reason',
           ts: payload.action_ts
         },
         {
           callback_id: 'moderator_action',
           color: 'danger',
           footer: `Posted in <#${channel}> by <@${msg.user}>`,
-          title: 'Message',
-          title_link: payload.submission.permalink,
-          text: msg.text,
+          mrkdwn_in: ['text'],
+          text: `<${payload.submission.permalink}|Permalink>\n${msg.text}`,
           ts: msg.ts,
           actions: actions
         }
@@ -275,9 +273,10 @@ function moderatorSubmitPrivateDm(payload) {
         attachments: [
           {
             color: 'danger',
-            title: 'Message',
-            title_link: payload.submission.permalink,
-            text: msg.text
+            footer: `Posted in <#${im.channel.id}> by <@${msg.user}>`,
+            mrkdwn_in: ['text'],
+            text: `<${payload.submission.permalink}|Permalink>\n${msg.text}`,
+            ts: msg.ts
           }
         ]
       });
