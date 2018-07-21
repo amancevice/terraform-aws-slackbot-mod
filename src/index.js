@@ -1,6 +1,4 @@
-const remove_callback_id = process.env.REMOVE_CALLBACK_ID;
-const report_callback_id = process.env.REPORT_CALLBACK_ID;
-const moderation_channel = process.env.MODERATION_CHANNEL;
+const moderator_channel = process.env.MODERATOR_CHANNEL;
 
 let secrets, slack;
 
@@ -38,9 +36,7 @@ function getSlack() {
       resolve(slack);
     } else {
       const { WebClient } = require('@slack/client');
-      slack = {};
-      slack.user = new WebClient(secrets.USER_ACCESS_TOKEN);
-      slack.bot = new WebClient(secrets.BOT_ACCESS_TOKEN);
+      slack = new WebClient(secrets.WORKSPACE_TOKEN);
       resolve(slack);
     }
   });
@@ -75,17 +71,17 @@ function getMessage(permalink) {
   const pattern = /https:\/\/.*?.slack.com\/archives\/(.*?)\/p(\d{10})(\d{6})/;
   const match = permalink.match(pattern);
   const channel = match[1];
-  const ts = +match.slice(2, 4).join('.');
+  const ts = match.slice(2, 4).join('.');
 
   if (permalink.match(/thread_ts=/)) {
-    const thread_ts = +permalink.match(/thread_ts=(\d{10}\.\d{6})/)[1];
+    const thread_ts = permalink.match(/thread_ts=(\d{10}\.\d{6})/)[1];
     const options = {
       channel: channel,
       thread_ts: thread_ts,
       ts: ts
     };
     console.log(`REPLIES ${JSON.stringify(options)}`);
-    return slack.user.conversations.replies(options).then((res) => {
+    return slack.conversations.replies(options).then((res) => {
       console.log(`MESSAGE ${JSON.stringify(res.messages[0])}`);
       return res.messages[0];
     });
@@ -97,8 +93,8 @@ function getMessage(permalink) {
       latest: ts
     };
     console.log(`HISTORY ${JSON.stringify(options)}`);
-    return slack.user.conversations.history(options).then((res) => {
-      console.log(`MESSAGE ${res.messages[0]}`);
+    return slack.conversations.history(options).then((res) => {
+      console.log(`MESSAGE ${JSON.stringify(res.messages[0])}`);
       return res.messages[0];
     });
   }
@@ -110,7 +106,7 @@ function getMessage(permalink) {
  * @param {object} event SNS event object.
  */
 function reportMessageAction(payload) {
-  return slack.bot.chat.getPermalink({
+  return slack.chat.getPermalink({
       channel: payload.channel.id,
       message_ts: payload.message.ts
     }).then((res) => {
@@ -137,7 +133,7 @@ function reportMessageAction(payload) {
         ]
       };
       console.log(`DIALOG ${JSON.stringify(dialog)}`);
-      return slack.bot.dialog.open({
+      return slack.dialog.open({
         trigger_id: payload.trigger_id,
         dialog: dialog
       });
@@ -168,7 +164,7 @@ function reportMessageSubmit(payload, remove) {
     const actions = [warn_user, remove_message];
     const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
     const post = {
-      channel: moderation_channel,
+      channel: moderator_channel,
       text: 'A message has been reported.',
       attachments: [
         {
@@ -189,7 +185,7 @@ function reportMessageSubmit(payload, remove) {
       ]
     };
     console.log(`POST ${JSON.stringify(post)}`);
-    return slack.user.chat.postMessage(post);
+    return slack.chat.postMessage(post);
   });
 }
 
@@ -251,7 +247,7 @@ function moderatorAction(payload, permalink, value) {
     ]
   };
   console.log(`DIALOG ${JSON.stringify(dialog)}`);
-  return slack.bot.dialog.open({
+  return slack.dialog.open({
     trigger_id: payload.trigger_id,
     dialog: dialog
   });
@@ -265,9 +261,9 @@ function moderatorAction(payload, permalink, value) {
 function moderatorSubmitPrivateDm(payload) {
   return getMessage(payload.submission.permalink).then((msg) => {
     console.log('OPENING CONVERSATION');
-    return slack.bot.conversations.open({users: msg.user}).then((im) => {
+    return slack.conversations.open({users: msg.user}).then((im) => {
       console.log('POSTING MESSAGE');
-      return slack.bot.chat.postMessage({
+      return slack.chat.postMessage({
         channel: im.channel.id,
         text: payload.submission.message,
         attachments: [
@@ -298,7 +294,7 @@ function moderatorSubmitPostInThread(payload) {
       thread_ts: msg.thread_ts || msg.ts
     };
     console.log(`POST ${JSON.stringify(options)}`);
-    return slack.user.chat.postMessage(options);
+    return slack.chat.postMessage(options);
   });
 }
 
@@ -316,7 +312,7 @@ function moderatorSubmitRemoveMessage(payload) {
       ts: msg.ts
     };
     console.log(`REMOVE ${JSON.stringify(options)}`);
-    return slack.user.chat.update(options);
+    return slack.chat.update(options);
   });
 }
 
@@ -334,18 +330,18 @@ function moderatorSubmitRemoveThread(payload) {
       ts: msg.thread_ts
     };
 
-    return slack.user.conversations.replies(options).then((res) => {
+    return slack.conversations.replies(options).then((res) => {
       return Promise.all(
         res.messages.reverse().map((rep) => {
           options.ts = rep.ts;
           console.log(`REMOVE ${JSON.stringify(options)}`);
-          slack.user.chat.update(options);
+          slack.chat.update(options);
         })
       );
     }).then((res) => {
       options.ts = msg.ts;
       console.log(`REMOVE ${JSON.stringify(options)}`);
-      return slack.user.chat.update(options);
+      return slack.chat.update(options);
     });
   });
 }
