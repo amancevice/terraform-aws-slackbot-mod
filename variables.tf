@@ -31,12 +31,12 @@ variable "lambda_timeout" {
   default     = 300
 }
 
-variable "moderation_channel" {
-  description = "Slack moderator channel ID"
+variable "moderator_channel" {
+  description = "Slack moderator channel ID."
 }
 
-variable "role_arn" {
-  description = "Slackbot role ARN."
+variable "role" {
+  description = "Slackbot role."
 }
 
 variable "secret" {

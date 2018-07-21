@@ -19,13 +19,17 @@ data "archive_file" "package" {
   type        = "zip"
 }
 
+data "aws_iam_role" "role" {
+  name = "${var.role}"
+}
+
 resource "aws_lambda_function" "lambda" {
   description      = "${var.lambda_description}"
   filename         = "${data.archive_file.package.output_path}"
   function_name    = "${local.lambda_function_name}"
   handler          = "index.handler"
   memory_size      = "${var.lambda_memory_size}"
-  role             = "${var.role_arn}"
+  role             = "${data.aws_iam_role.role.arn}"
   runtime          = "nodejs8.10"
   source_code_hash = "${data.archive_file.package.output_base64sha256}"
   tags             = "${var.lambda_tags}"
@@ -33,8 +37,8 @@ resource "aws_lambda_function" "lambda" {
 
   environment {
     variables {
-      MODERATION_CHANNEL = "${var.moderation_channel}"
-      SECRET             = "${var.secret}"
+      MODERATOR_CHANNEL = "${var.moderator_channel}"
+      SECRET            = "${var.secret}"
     }
   }
 }
