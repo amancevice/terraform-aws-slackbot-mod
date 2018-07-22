@@ -161,7 +161,7 @@ function reportMessageSubmit(payload, remove) {
       type: 'button',
       value: payload.submission.permalink
     };
-    const actions = [warn_user, remove_message];
+    const actions = [warn_user];
     const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
     const post = {
       channel: moderator_channel,
@@ -178,7 +178,7 @@ function reportMessageSubmit(payload, remove) {
           color: 'danger',
           footer: `Posted in <#${channel}> by <@${msg.user}>`,
           mrkdwn_in: ['text'],
-          text: `<${payload.submission.permalink}|Permalink>\n${msg.text}`,
+          text: `<${payload.submission.permalink}|*Permalink*>\n${msg.text}`,
           ts: msg.ts,
           actions: actions
         }
@@ -243,6 +243,13 @@ function moderatorAction(payload, permalink, value) {
         name: 'permalink',
         type: 'text',
         value: permalink
+      },
+      {
+        hint: 'Do not alter this value.',
+        label: 'Report Timestamp',
+        name: 'report_ts',
+        type: 'text',
+        value: payload.original_message.ts
       }
     ]
   };
@@ -259,24 +266,48 @@ function moderatorAction(payload, permalink, value) {
  * @param {object} payload Slack payload.
  */
 function moderatorSubmitPrivateDm(payload) {
-  return getMessage(payload.submission.permalink).then((msg) => {
-    console.log('OPENING CONVERSATION');
-    return slack.conversations.open({users: msg.user}).then((im) => {
-      console.log('POSTING MESSAGE');
-      return slack.chat.postMessage({
-        channel: im.channel.id,
-        text: payload.submission.message,
-        attachments: [
-          {
-            color: 'danger',
-            footer: `Posted in <#${im.channel.id}> by <@${msg.user}>`,
-            mrkdwn_in: ['text'],
-            text: `<${payload.submission.permalink}|Permalink>\n${msg.text}`,
-            ts: msg.ts
-          }
-        ]
-      });
-    });
+  const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+  return getMessage(payload.submission.permalink).then((res) => {
+    const options = {
+      channel: res.user,
+      text: payload.submission.message,
+      attachments: [
+        {
+          color: 'danger',
+          footer: `Posted in <#${channel}> by <@${res.user}>`,
+          mrkdwn_in: ['text'],
+          text: `<${payload.submission.permalink}|Permalink>\n${res.text}`,
+          ts: res.ts
+        }
+      ]
+    };
+    console.log(`DM ${JSON.stringify(options)}`);
+    return slack.chat.postMessage(options);
+  }).then((res) => {
+    const options = {
+      channel: moderator_channel,
+      count: 1,
+      inclusive: true,
+      latest: payload.submission.report_ts
+    };
+    console.log(`HISTORY ${JSON.stringify(options)}`);
+    return slack.conversations.history(options);
+  }).then((res) => {
+    const msg = res.messages[0];
+    const addendum = {
+      color: 'warning',
+      footer: `<@${payload.user.id}> warned user in DM`,
+      text: payload.submission.message,
+      ts: payload.action_ts
+    };
+    const options = {
+      attachments: msg.attachments.concat([addendum]),
+      channel: moderator_channel,
+      text: msg.text,
+      ts: payload.submission.report_ts
+    };
+    console.log(`ADDENDUM ${JSON.stringify(options)}`);
+    return slack.chat.update(options);
   });
 }
 
@@ -286,15 +317,40 @@ function moderatorSubmitPrivateDm(payload) {
  * @param {object} payload Slack payload.
  */
 function moderatorSubmitPostInThread(payload) {
-  return getMessage(payload.submission.permalink).then((msg) => {
-    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+  const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+  return getMessage(payload.submission.permalink).then((res) => {
     const options = {
       channel: channel,
       text: payload.submission.message,
-      thread_ts: msg.thread_ts || msg.ts
+      thread_ts: res.thread_ts || res.ts
     };
     console.log(`POST ${JSON.stringify(options)}`);
     return slack.chat.postMessage(options);
+  }).then((res) => {
+    const options = {
+      channel: moderator_channel,
+      count: 1,
+      inclusive: true,
+      latest: payload.submission.report_ts
+    };
+    console.log(`HISTORY ${JSON.stringify(options)}`);
+    return slack.conversations.history(options);
+  }).then((res) => {
+    const msg = res.messages[0];
+    const addendum = {
+      color: 'warning',
+      footer: `<@${payload.user.id}> warned user in <#${channel}>`,
+      text: payload.submission.message,
+      ts: payload.action_ts
+    };
+    const options = {
+      attachments: msg.attachments.concat([addendum]),
+      channel: moderator_channel,
+      text: msg.text,
+      ts: payload.submission.report_ts
+    };
+    console.log(`ADDENDUM ${JSON.stringify(options)}`);
+    return slack.chat.update(options);
   });
 }
 
@@ -304,15 +360,20 @@ function moderatorSubmitPostInThread(payload) {
  * @param {object} payload Slack payload.
  */
 function moderatorSubmitRemoveMessage(payload) {
+  const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
   return getMessage(payload.submission.permalink).then((msg) => {
-    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
+    const options = {channel: channel, ts: msg.ts};
+    console.log(`REMOVE ${JSON.stringify(options)}`);
+    return slack.chat.delete(options);
+  }).then((res) => {
+    console.log(`RES ${JSON.stringify(res)}`);
     const options = {
       channel: channel,
-      text: `_${payload.submission.message}_`,
-      ts: msg.ts
+      text: 'A message was removed',
+      thread_ts: undefined
     };
-    console.log(`REMOVE ${JSON.stringify(options)}`);
-    return slack.chat.update(options);
+    console.log(`POST ${JSON.stringify(options)}`);
+    return slack.chat.postMessage(options);
   });
 }
 
