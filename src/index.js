@@ -163,7 +163,7 @@ function reportMessageSubmit(payload, remove) {
     };
     const actions = [warn_user];
     const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
-    const post = {
+    const report = {
       channel: moderator_channel,
       text: 'A message has been reported.',
       attachments: [
@@ -184,8 +184,23 @@ function reportMessageSubmit(payload, remove) {
         }
       ]
     };
-    console.log(`POST ${JSON.stringify(post)}`);
-    return slack.chat.postMessage(post);
+    console.log(`REPORT ${JSON.stringify(report)}`);
+    return slack.chat.postMessage(report);
+  }).then((res) => {
+    const receipt = {
+      channel: payload.user.id,
+      text: 'We have received your report',
+      attachments: [
+        {
+          color: 'warning',
+          footer: `Reported by <@${payload.user.id}>`,
+          text: payload.submission.reason,
+          ts: payload.action_ts
+        }
+      ]
+    };
+    console.log(`RECEIPT ${JSON.stringify(receipt)}`);
+    return slack.chat.postMessage(receipt);
   });
 }
 
