@@ -376,57 +376,6 @@ function moderatorSubmitPostInThread(payload) {
 }
 
 /**
- * Remove message.
- *
- * @param {object} payload Slack payload.
- */
-function moderatorSubmitRemoveMessage(payload) {
-  const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
-  return getMessage(payload.submission.permalink).then((msg) => {
-    const options = {channel: channel, ts: msg.ts};
-    console.log(`REMOVE ${JSON.stringify(options)}`);
-    return slack.user.chat.delete(options);
-  }).then((res) => {
-    console.log(`RES ${JSON.stringify(res)}`);
-    const options = {
-      channel: channel,
-      text: 'A message was removed',
-      thread_ts: undefined
-    };
-    console.log(`POST ${JSON.stringify(options)}`);
-    return slack.bot.chat.postMessage(options);
-  });
-}
-
-/**
- * Remove message.
- *
- * @param {object} payload Slack payload.
- */
-function moderatorSubmitRemoveThread(payload) {
-  return getMessage(payload.submission.permalink).then((msg) => {
-    const channel = payload.submission.permalink.match(/archives\/(.*?)\//)[1];
-    const options = {
-      channel: channel,
-      ts: msg.thread_ts
-    };
-    return slack.user.conversations.replies(options).then((res) => {
-      return Promise.all(
-        res.messages.reverse().map((rep) => {
-          options.ts = rep.ts;
-          console.log(`REMOVE ${JSON.stringify(options)}`);
-          slack.user.chat.delete(options);
-        })
-      );
-    }).then((res) => {
-      options.ts = msg.ts;
-      console.log(`REMOVE ${JSON.stringify(options)}`);
-      return slack.user.chat.delete(options);
-    });
-  });
-}
-
-/**
  * Handle SNS message.
  *
  * @param {object} event SNS event object.
@@ -476,21 +425,11 @@ function handler(event, context, callback) {
       else if (payload.submission.type === 'post_in_thread') {
         return moderatorSubmitPostInThread(payload);
       }
-
-      // Remove message
-      else if (payload.submission.type === 'remove_message') {
-        return moderatorSubmitRemoveMessage(payload);
-      }
-
-      // Remove thread
-      else if (payload.submission.type === 'remove_thread') {
-        return moderatorSubmitRemoveThread(payload);
-      }
     }
   }).then((res) => {
-    callback(null, res);
+    callback();
   }).catch((err) => {
-    console.error(`ERROR ${err}`);
+    console.error(`ERROR ${JSON.stringify(err)}`);
     callback(err);
   });
 }
