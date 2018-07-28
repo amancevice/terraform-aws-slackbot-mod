@@ -1,6 +1,6 @@
 const moderator_channel = process.env.MODERATOR_CHANNEL;
 
-let secrets, slack;
+let payload, secrets, slack;
 
 /**
  * Get Slack tokens from memory or AWS SecretsManager.
@@ -51,18 +51,13 @@ function getSlack() {
  * @param {object} event SNS event object.
  */
 function getPayload(event) {
-  // Log it
-  console.log(`EVENT ${JSON.stringify(event)}`);
-
-  // Map it
-  let payload;
-  event.Records.map((record) => {
-    // Parse it
-    payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64').toString());
+  return new Promise((resolve, reject) => {
+    event.Records.map((record) => {
+      payload = JSON.parse(Buffer.from(record.Sns.Message, 'base64'));
+      console.log(`PAYLOAD ${JSON.stringify(payload)}`);
+      resolve(payload);
+    });
   });
-  // Send it
-  console.log(`PAYLOAD ${JSON.stringify(payload)}`);
-  return payload;
 }
 
 /**
@@ -439,8 +434,8 @@ function moderatorSubmitRemoveThread(payload) {
  * @param {function} callback Lambda callback function.
  */
 function handler(event, context, callback) {
-  return getSecrets().then(getSlack).then((res) => {
-    const payload = getPayload(event);
+  console.log(`EVENT ${JSON.stringify(event)}`);
+  return getPayload(event).then(getSecrets).then(getSlack).then(() => {
     console.log(`CALLBACK ${payload.callback_id}`);
 
     // Open dialog to report message
