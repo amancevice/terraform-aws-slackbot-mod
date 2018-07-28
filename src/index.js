@@ -61,6 +61,188 @@ function getPayload(event) {
 }
 
 /**
+ * Send report message confirmation to user.
+ *
+ * @param {object} payload Slack payload.
+ */
+function reportMessage(payload) {
+  // Get permalink to reported message
+  const options = {channel: payload.channel.id, message_ts: payload.message.ts};
+  console.log(`GET PERMALINK ${JSON.stringify(options)}`);
+  return slack.bot.chat.getPermalink(options).then((msg) => {
+    console.log(`PERMALINK ${JSON.stringify(msg)}`);
+
+    // Open DM with reporter
+    const options = {user: payload.user.id};
+    console.log(`OPEN IM ${JSON.stringify(options)}`);
+    return slack.bot.im.open(options).then((dm) => {
+      console.log(`IM ${JSON.stringify(dm)}`);
+
+      // Send DM to reporter
+      const options = {
+        attachments: [
+          {
+            actions: [
+              {
+                name: 'report',
+                text: 'Report',
+                type: 'button',
+                value: msg.permalink
+              }
+            ],
+            callback_id: 'compose_report',
+            color: 'danger',
+            footer: `Posted in <#${payload.channel.id}> by <@${payload.message.user}>`,
+            mrkdwn_in: ['text'],
+            text: payload.message.text,
+            ts: payload.message.ts
+          }
+        ],
+        channel: dm.channel.id,
+        text: 'Report this message?'
+      }
+      console.log(`SEND DM ${JSON.stringify(options)}`);
+      return slack.bot.chat.postMessage(options).then((res) => {
+        console.log(`DM ${JSON.stringify(res)}`);
+        return res;
+      });
+    });
+  });
+}
+
+/**
+ * Open dialog to take report.
+ *
+ * @param {object} payload Slack payload.
+ */
+function composeReport(payload) {
+  // Get permalink to confirmation report
+  const options = {
+    channel: payload.channel.id,
+    message_ts: payload.original_message.ts
+  };
+  console.log(`GET PERMALINK ${JSON.stringify(options)}`);
+  return slack.bot.chat.getPermalink(options).then((msg) => {
+    console.log(`PERMALINK ${JSON.stringify(msg)}`);
+
+    // Open dialog to take report
+    const options = {
+      dialog: {
+        callback_id: 'submit_report',
+        title: 'Report Message',
+        submit_label: 'Send',
+        elements: [
+          {
+            hint: 'This report will be posted to the moderators.',
+            label: 'Reason',
+            name: 'reason',
+            placeholder: 'Why is this message being reported?',
+            type: 'textarea'
+          },
+          {
+            hint: 'Do not alter this value.',
+            label: 'Permalink',
+            name: 'permalink',
+            type: 'text',
+            value: msg.permalink
+          }
+        ]
+      },
+      trigger_id: payload.trigger_id
+    };
+    console.log(`OPEN DIALOG ${JSON.stringify(options)}`);
+    return slack.bot.dialog.open(options).then((dialog) => {
+      console.log(`DIALOG ${JSON.stringify(dialog)}`);
+      return dialog;
+    });
+  });
+}
+
+/**
+ * Post report to moderator channel.
+ *
+ * @param {object} payload Slack payload.
+ */
+function submitReport(payload) {
+  // Get original message from submission
+  const pattern = /https:\/\/.*?.slack.com\/archives\/(.*?)\/p(\d{10})(\d{6})/;
+  const match = payload.submission.permalink.match(pattern);
+  const channel = match[1];
+  const ts = match.slice(2, 4).join('.');
+  const options = {
+    channel: channel,
+    count: 1,
+    inclusive: true,
+    latest: ts
+  };
+  console.log(`GET HISTORY ${JSON.stringify(options)}`);
+  return slack.bot.conversations.history(options).then((history) => {
+    console.log(`HISTORY ${JSON.stringify(history)}`);
+
+    // Send report
+    const message = history.messages[0];
+    const attachment = message.attachments[0];
+    const options = {
+      channel: moderator_channel || 'GB1SLKKL7',
+      text: 'A message has been reported.',
+      attachments: [
+        {
+          actions: [
+            {
+              name: 'contact_reporter',
+              text: 'Contact Reporter',
+              type: 'button',
+              value: payload.submission.permalink
+            }
+          ],
+          color: 'warning',
+          footer: `Reported by <@${payload.user.id}>`,
+          text: payload.submission.reason,
+          ts: payload.action_ts
+        },
+        {
+          actions: [
+            {
+              name: 'warn_action',
+              text: 'Send Warning',
+              type: 'button',
+              value: payload.submission.permalink
+            }
+          ],
+          callback_id: 'warn_user',
+          color: 'danger',
+          footer: attachment.footer,
+          mrkdwn_in: ['text'],
+          text: attachment.text,
+          ts: attachment.ts
+        }
+      ]
+    };
+    console.log(`SUBMIT ${JSON.stringify(options)}`);
+    return slack.bot.chat.postMessage(options).then((rpt) => {
+      console.log(`REPORT ${JSON.stringify(rpt)}`);
+
+      // Update original
+      message.channel = channel;
+      message.attachments[0].actions = [];
+      message.attachments = message.attachments.concat([
+        {
+          color: 'warning',
+          footer: `Reported by <@${payload.user.id}>`,
+          text: 'Report submitted.',
+          ts: rpt.ts
+        }
+      ]);
+      console.log(`UPDATE ${JSON.stringify(message)}`);
+      return slack.bot.chat.update(message).then((up) => {
+        console.log(`UPDATED ${JSON.stringify(up)}`);
+        return up;
+      });
+    });
+  });
+}
+
+/**
  * Get Slack message from permalink.
  *
  * @param {string} permalink Slack permalink URL
@@ -425,6 +607,21 @@ function handler(event, context, callback) {
       else if (payload.submission.type === 'post_in_thread') {
         return moderatorSubmitPostInThread(payload);
       }
+    }
+
+    // Send DM to confirm report
+    else if (payload.callback_id === 'report_message') {
+      return reportMessage(payload);
+    }
+
+    // Open dialog to take report
+    else if (payload.callback_id === 'compose_report') {
+      return composeReport(payload);
+    }
+
+    // Post report to moderator channel
+    else if (payload.callback_id === 'submit_report') {
+      return reportMessageSubmit(payload);
     }
   }).then((res) => {
     callback();
