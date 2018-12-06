@@ -9,4 +9,5 @@
 *.tfvars
 
 # node
+.env
 node_modules/
