@@ -1,7 +1,3 @@
-provider "archive" {
-  version = "~> 1.0"
-}
-
 locals {
   lambda_function_name = "${coalesce("${var.lambda_function_name}", "slack-${var.api_name}-moderator")}"
 
@@ -13,32 +9,26 @@ locals {
   ]
 }
 
-data "archive_file" "package" {
-  output_path = "${path.module}/dist/package.zip"
-  source_dir  = "${path.module}/src"
-  type        = "zip"
-}
-
 data "aws_iam_role" "role" {
   name = "${var.role}"
 }
 
 resource "aws_lambda_function" "lambda" {
   description      = "${var.lambda_description}"
-  filename         = "${data.archive_file.package.output_path}"
+  filename         = "${path.module}/package.zip"
   function_name    = "${local.lambda_function_name}"
   handler          = "index.handler"
   memory_size      = "${var.lambda_memory_size}"
   role             = "${data.aws_iam_role.role.arn}"
   runtime          = "nodejs8.10"
-  source_code_hash = "${data.archive_file.package.output_base64sha256}"
+  source_code_hash = "${base64sha256(file("${path.module}/package.zip"))}"
   tags             = "${var.lambda_tags}"
   timeout          = "${var.lambda_timeout}"
 
   environment {
     variables {
+      AWS_SECRET        = "${var.secret}"
       MODERATOR_CHANNEL = "${var.moderator_channel}"
-      SECRET            = "${var.secret}"
     }
   }
 }
@@ -54,7 +44,7 @@ resource "aws_lambda_permission" "trigger" {
 
 resource "aws_sns_topic" "callbacks" {
   count = "${length("${local.callbacks}")}"
-  name  = "slack_callback_${element("${local.callbacks}", count.index)}"
+  name  = "slack_${var.api_name}_callback_${element("${local.callbacks}", count.index)}"
 }
 
 resource "aws_sns_topic_subscription" "subscription" {
